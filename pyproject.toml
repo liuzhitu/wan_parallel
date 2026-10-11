@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wan_parallel"
+version = "0.1.0"
+description = "Project-owned tensor and sequence parallel inference for Wan2.1"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["torch", "safetensors", "easydict", "tqdm"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["parallel", "parallel.*", "models", "models.*", "runtime", "runtime.*", "pipelines", "pipelines.*"]
+namespaces = false

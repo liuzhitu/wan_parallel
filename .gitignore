@@ -1,0 +1,40 @@
+# External source, model weights and runtime outputs
+third_party/
+checkpoints/
+outputs/
+results/
+logs/
+env-info/
+*.safetensors
+*.pth
+*.pt
+*.ckpt
+*.mp4
+*.gif
+*.nsys-rep
+*.qdrep
+
+# Python environments, build files and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and editor files
+.env
+.env.*
+.codex/
+.agents/
+AGENTS.md
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
