@@ -56,11 +56,12 @@ class ColumnParallelLinear(nn.Module):
 
 
 class RowParallelLinear(nn.Module):
-    """Sum partial outputs from an already feature-sharded input, then add bias.
+    """Sum partial outputs, including a single rank's fused bias contribution.
 
     For TP size P, each rank owns weight [O, I/P] and full bias [O].
     Each rank receives its contiguous feature range of the input [..., I/P].
-    SUM AllReduce restores [..., O] on all ranks before bias is added once.
+    TP rank 0 includes the full bias in its Linear; other ranks omit it.
+    SUM AllReduce restores [..., O] with exactly one bias contribution.
     The input is not split again; passing a full input is a shape error.
     """
 
@@ -91,9 +92,8 @@ class RowParallelLinear(nn.Module):
 
     @torch.no_grad()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output = F.linear(x, self.weight, bias=None)
+        # Match vLLM's Row Linear: include bias on one TP rank before reduction.
+        bias = self.bias if dist.get_rank(self.process_group) == 0 else None
+        output = F.linear(x, self.weight, bias=bias)
         dist.all_reduce(output, op=dist.ReduceOp.SUM, group=self.process_group)
-        # In-place addition preserves the Linear output dtype under autocast,
-        # even when the stored bias is FP32 and the output is BF16.
-        output.add_(self.bias)
         return output

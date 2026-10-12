@@ -2,6 +2,21 @@
 
 基于固定版本 Wan2.1-T2V-1.3B 的 TP2 / SP2 推理工程。本目录是新工程根目录，Python 包和后续入口均在本目录组织。
 
+## Git 仓库与 SP 开发前快照
+
+GitHub 仓库为 [liuzhitu/wan_parallel](https://github.com/liuzhitu/wan_parallel)，`origin` 地址为 `https://github.com/liuzhitu/wan_parallel.git`，主分支为 `main`。本地源码仓库根目录是 `D:/研究生/ai_infra/TP_SP/wan_parallel`；外层 `TP_SP` 的独立 `.git` 不对应这个 GitHub 仓库。在外层操作源码 Git 时使用 `git -C wan_parallel ...`，并先核对 `rev-parse --show-toplevel` 与 `remote -v`。
+
+`修复rowlinear的bias通信后加法带来的误差` 是 2026-10-12 保存的 SP 开发前源码快照，包含当时的 TP 实现、已有检查和性能脚本及运行说明。该标签只标记源码状态，不代表新增运行验证通过；官方源码、模型权重、环境、运行结果和外层规划文档不包含在快照中。
+
+需要回到该版本时，在 `wan_parallel` 仓库根目录确认工作区干净，再从标签创建恢复分支：
+
+```bash
+git fetch origin --tags
+git switch -c restore-tp2 修复rowlinear的bias通信后加法带来的误差
+```
+
+后续 SP 开发不会移动该标签，恢复分支也会保留 `main` 上的后续提交。
+
 ## 项目结构
 
 ```text
@@ -224,6 +239,41 @@ CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=1 ../.venv/bin/python \
 运行结果、日志和视频只保存在云端或本地研究工作区，不提交到本源码仓库。既有正式单卡结果保持保留；TP 正确性对比和 SP 性能测量入口尚未实现。
 
 ## TP2 双卡性能测量
+
+### 81 帧正式 workload 一次启动
+
+独立性能和显存诊断入口（云端待执行）：
+`bash benchmarks/run_profile_wan_81.sh ../outputs/profiles/wan_f81_s50_run01`。
+复用官方单卡和 TP2 正常管线，各执行一次完整预热和一次 81 帧／50 steps 诊断生成。
+生成配置与正式 benchmark 一致，不保存新的 MP4，不修改原性能结果。
+`single/` 与 `tp2/` 下的 `rank_N.json` 记录输入准备、首次 DiT restore、完整 sampling、
+DiT offload、VAE decode、cleanup/wait 的分阶段 allocated/reserved 起止值与峰值、墙钟时间，
+并记录 DiT/T5/VAE 参数及注册 buffer 的 device/dtype 字节数。
+分阶段峰值包含该阶段开始时已经存活的张量，不是阶段新增显存；参数清单不包含激活、
+CUDA/NCCL 外部 workspace 或未注册张量。rank 1 没有 VAE，其 after_offload 阶段包含结束等待。
+`rank_N.operators.txt`、`rank_N.operators.json` 和 `rank_N.trace.json.gz`
+来自 PyTorch 2.8 profiler，在正式诊断调用中跳过 5 个采样步、预热 profiler 1 个步，
+记录随后 2 个采样步的 forward 窗口。step 边界位于每步第二次 DiT forward 后，
+因此 CFG/scheduler 位于相邻窗口边界；不要把该 trace 视为全 50 步或全管线的占比。
+JSON 中的 kernel_summary 从 trace 的 CUDA kernel 事件统计 NCCL、Attention、GEMM、other，
+分类按 kernel 名称推断，并记录 kernel 区间并集与未覆盖区间；NCCL 时长包含等待，
+并发 kernel 时长累计不等于墙钟耗时，未覆盖区间也不能直接归因于 CPU。
+阶段边界 GPU 同步及 profiler/export 会扰动耗时，诊断时间不能替代正式 benchmark；
+嵌套算子的 inclusive 时间、并发 CUDA stream 的 kernel 时间不能直接相加解释墙钟时间。
+入口只在诊断期间临时包装模型搬运及 VAE decode 方法并添加 hooks，调用原方法并在结束时恢复；
+不修改官方源码、TP collective 或采样代码。本机仅人工审阅，未执行语法、import 或运行验证。
+
+云端执行 `bash benchmarks/run_wan_81.sh all ../outputs/benchmarks/wan_f81_s50_run01`，
+依次在同一实例上运行官方单卡 reference 和 TP2。两侧固定 832×480、81 帧、50 steps、
+UniPC、shift=8、CFG=6、seed=42、CPU T5、offload=True，使用 Python benchmark 的相同默认 prompt。
+每侧加载一次管线，预热 1 次并测量 3 次，共 8 次完整生成。
+结果分别位于 `single/` 和 `tp2/` 的 `metrics.json`、`last_run.mp4`；TP2 自动读取匹配单卡报告计算加速比。
+输出根目录可省略，默认使用时间戳；已有 metrics 的子目录拒绝覆盖。
+也可将 `all` 改为 `single` 或 `tp2` 单独执行；`tp2` 在同一输出根目录存在单卡报告时进行比较。
+脚本使用项目相邻 `.venv`，无需手动激活；失败时停止，并保留 Python benchmark 已写入的部分报告。
+计时排除模型加载、输出检查及 MP4 编码，记录完整 generate 和 DiT CUDA 区间合计，未单独测量完整 denoising。
+最后一轮视频用于质量对比，本入口没有自动计算视频相似度，也不将成功生成视为质量验收通过。
+该启动脚本本机仅人工审阅，云端待执行；一次固定 prompt/seed 的结果不能代表所有生成质量。
 
 `benchmarks/benchmark_wan_tp2.py` 面向单机 TP=2、两个 GPU，以 torchrun 启动两个进程；`--tp-size` 只接受 2，WORLD size 与 TP size 的一致性沿用 runtime 检查。它调用现有 `WanT2VTP.generate`，不复制采样循环或修改 TP collective。默认采用正式 workload：832×480、81 帧、50 steps、UniPC、shift=8、CFG=6、seed=42、CPU T5、offload=True，预热 1 次、正式测量 3 次。可显式传入 `--frames 17 --steps 5` 先测小 workload，结果须使用新的输出目录，并与对应的小 workload 单卡结果比较。
 
